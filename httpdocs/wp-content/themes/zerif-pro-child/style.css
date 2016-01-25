@@ -13,3 +13,31 @@ Tags: black, gray, red, white, one-column, two-columns, right-sidebar, responsiv
 ul#shipping_method label{
   display: inline;
 }
+
+.product_list_widget h3{
+    margin-top: 5px;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.product_list_widget .feedback-box{
+  position: relative;
+}
+
+.product_list_widget .message p{
+    line-height: 1.3em;
+}
+
+
+
+.product_list_widget .message img{
+  position: absolute;
+  margin: auto;
+  bottom: 15px;
+  left: 0;
+  right: 0;
+}
+
+.product_list_widget .feedback-box{
+    height: 380px;
+}
