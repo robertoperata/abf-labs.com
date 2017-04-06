@@ -29,10 +29,10 @@ define( 'WP_DEBUG', true);
 define('DB_NAME', 'wx1ikc2l_afs-labs');
 
 /** Nome utente del database MySQL */
-define('DB_USER', 'wx1ikc2l_nic');
+define('DB_USER', 'root');
 
 /** Password del database MySQL */
-define('DB_PASSWORD', '!7s&pgq]WmPl');
+define('DB_PASSWORD', 'root');
 
 /** Hostname MySQL  */
 define('DB_HOST', 'localhost');

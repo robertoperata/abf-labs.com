@@ -3,7 +3,7 @@ Contributors: nuagelab
 Donate link: http://www.nuagelab.com/products/wordpress-plugins/
 Tags: admin, administration, links, resources, domain change, migration
 Requires at least: 3.0
-Tested up to: 4.2.3
+Tested up to: 4.5.1
 Stable tag: trunk
 License: GPLv2 or later
 
@@ -82,16 +82,25 @@ Yes, this plugin will be translated to french shortly. If you want to help with 
 1. The domain change and admin notice
 
 == Changelog ==
+= 2.0.1 =
+* Tested up to WordPress 4.6.1
+* Removed admin notice for users who don't have update_core permission
+
+= 2.0.0 =
+* Tested up to WordPress 4.4.2
+* Added backup functionnality
+* Removed usage of mysql_* functions in favor of $wpdb
+
 = 1.0.1 =
-* Tested up to 4.2.2
+* Tested up to WordPress 4.2.2
 
 = 1.0 =
-* Tested up to 4.2.1
+* Tested up to WordPress 4.2.1
 
 = 0.0.6 =
 * Bug fix with the processValue function generating a warning (thanks to @sniemetz for letting us know about this issue)
 * Slovak translation (thanks to Marek Letko)
-* Tested up to 4.1.1
+* Tested up to WordPress 4.1.1
 
 = 0.0.5 =
 * Minor text change

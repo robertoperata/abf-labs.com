@@ -4,7 +4,7 @@ Plugin Name: Automatic Domain Changer
 Plugin URI: http://www.nuagelab.com/wordpress-plugins/auto-domain-change
 Description: Automatically changes the domain of a WordPress blog
 Author: NuageLab <wordpress-plugins@nuagelab.com>
-Version: 1.0.1
+Version: 2.0.1
 License: GPLv2 or later
 Author URI: http://www.nuagelab.com/wordpress-plugins
 */
@@ -17,6 +17,7 @@ Author URI: http://www.nuagelab.com/wordpress-plugins
  * @author	Tommy Lacroix <tlacroix@nuagelab.com>
  */
 class auto_domain_change{
+
 	private static $_instance = null;
 
 	/**
@@ -65,11 +66,19 @@ class auto_domain_change{
 			if (isset($_POST['action'])) {
 				require_once(ABSPATH .'wp-includes/pluggable.php');
 				
-				if (wp_verify_nonce($_POST['nonce'],$_POST['action'])) {
+				if (wp_verify_nonce(@$_POST['nonce'],@$_POST['action'])) {
 					$parts = explode('+',$_POST['action']);
 					switch ($parts[0]) {
 						case 'backup-database':
-							return $this->do_backup();
+							if (current_user_can('export')) {
+								switch ($_POST['type']) {
+									case 'sql':
+									default:
+										return $this->do_backup_sql();
+									case 'php':
+										return $this->do_backup_php();
+								}
+							}
 						default:
 							// ignore
 							break;
@@ -114,12 +123,14 @@ class auto_domain_change{
 	 */
 	public function add_admin_notice()
 	{
-		echo '<div class="update-nag">
-			'.sprintf(__('The domain name of your WordPress blog appears to have changed! <a href="%1$s">Click here to update your config</a> or <a href="%2$s">dismiss</a>.','auto-domain-change'),
-				'/wp-admin/tools.php?page='.basename(__FILE__),
-				add_query_arg('dismiss-domain-change','1')
-			).'
-		</div>';
+		if (current_user_can('update_core')) {
+			echo '<div class="update-nag">
+				' . sprintf( __( 'The domain name of your WordPress blog appears to have changed! <a href="%1$s">Click here to update your config</a> or <a href="%2$s">dismiss</a>.', 'auto-domain-change' ),
+					'/wp-admin/tools.php?page=' . basename( __FILE__ ),
+					add_query_arg( 'dismiss-domain-change', '1' )
+				) . '
+			</div>';
+		}
 	} // add_admin_notice()
 
 
@@ -202,7 +213,15 @@ class auto_domain_change{
 		echo '</tr>';
 
 		echo '<tr valign="top">';
-		echo '<td colspan="2"><input type="checkbox" name="accept-terms" id="accept-terms" value="1" /> <label for="accept-terms"'.($error_terms?' style="color:red;font-weight:bold;"':'').'>'.__('I have backed up my database and will assume the responsability of any data loss or corruption.','auto-domain-change').'</label></td>';
+		echo '<td colspan="2"><input type="checkbox" name="accept-terms" id="accept-terms" value="1" /> <label for="accept-terms"'.($error_terms?' style="color:red;font-weight:bold;"':'').'>'.__('I have backed up my database, checked the backups integrity, know how to restore it, and will assume the responsability of any data loss or corruption.','auto-domain-change').'</label>';
+		echo '<br>';
+		echo '<br>';
+		echo '<p class="backup">';
+		echo '<button class="adc-backup-button" data-type="sql">'.__('Backup database as SQL','auto-domain-change').'</button>';
+		//echo '&nbsp;';
+		//echo '<button class="adc-backup-button" data-type="php">'.__('Backup database as PHP','auto-domain-change').'</button>';
+		echo '</p>';
+		echo '</td>';
 		//echo '<td colspan="2"><input type="checkbox" name="accept-terms" id="accept-terms" value="1" /> <label for="accept-terms"'.($error_terms?' style="color:red;font-weight:bold;"':'').'>'.__('I have <a id="adc-backup-button" href="">backed up my database</a> and will assume the responsability of any data loss or corruption.','auto-domain-change').'</label></td>';
 		echo '</tr>';
 
@@ -216,12 +235,14 @@ class auto_domain_change{
 		$action = 'backup-database+'.uniqid();
 		wp_nonce_field($action,'nonce');
 		echo '<input type="hidden" name="action" value="'.$action.'" />';
+		echo '<input type="hidden" name="type" value="sql" />';
 		echo '</form>';
 		echo <<<EOD
 <script>
 (function($){
-	$('#adc-backup-button').click(function(ev){
+	$('.adc-backup-button').click(function(ev){
 		ev.preventDefault();
+		$('#adc-backup-db input[name=type]').val( $(this).attr('data-type') );
 		$('#adc-backup-db').submit();
 	});
 })(jQuery);
@@ -253,15 +274,10 @@ EOD;
 		printf(__('New domain: %1$s','auto-domain-changer').'<br>', $new);
 		echo '<hr>';
 
-		mysql_connect(DB_HOST, DB_USER, DB_PASSWORD);
-		mysql_select_db(DB_NAME);
-		mysql_query('SET NAMES '.DB_CHARSET);
-		if (function_exists('mysql_set_charset')) mysql_set_charset(DB_CHARSET);
-
-		$ret = mysql_query('SHOW TABLES;');
+		$ret = $wpdb->get_results('SHOW TABLES;');
 		$tables = array();
-		while ($row = mysql_fetch_assoc($ret)) {
-			$row = array_values($row);
+		foreach ($ret as $row) {
+			$row = get_object_vars($row);
 			$tables [] = reset($row);
 		}
 
@@ -270,9 +286,11 @@ EOD;
 			if (substr($t,0,strlen($wpdb->prefix)) != $wpdb->prefix) continue;
 
 			// Get table indices
-			$ret = mysql_query('SHOW INDEX FROM '.$t);
+			$ret = $wpdb->get_results('SHOW INDEX FROM '.$t);
+
 			$id = null;
-			while ($row = mysql_fetch_assoc($ret)) {
+			foreach ($ret as $row) {
+				$row = get_object_vars($row);
 				if ($row['Key_name'] == 'PRIMARY') {
 					$id = $row['Column_name'];
 					break;
@@ -290,31 +308,39 @@ EOD;
 
 
 			// Process all rows
-			$ret = mysql_query('SELECT * FROM '.$t);
-			while ($row = mysql_fetch_assoc($ret)) {
-				$fields = array();
-				$sets = array();
-				
-				// Process all columns
-				foreach ($row as $k=>$v) {
-					// Save original value
-					$ov = $v;
-					
-					// Process value
-					$v = $this->processValue($v, $old, $new);
+			$o = 0;
+			do {
+				$sql = 'SELECT * FROM ' . $t. ' LIMIT '.$o.',50;';
+				$ret = $wpdb->get_results( $sql );
+				foreach ($ret as $row) {
+					$row = get_object_vars($row);
 
-					// If value changed, replace it
-					if ($ov != $v) {
-						$sets[] = '`'.$k.'`="'.mysql_real_escape_string($v).'"';
+					$fields = array();
+					$sets   = array();
+
+					// Process all columns
+					foreach ( $row as $k => $v ) {
+						// Save original value
+						$ov = $v;
+
+						// Process value
+						$v = $this->processValue( $v, $old, $new );
+
+						// If value changed, replace it
+						if ( $ov != $v ) {
+							$sets[] = '`' . $k . '`="' . esc_sql( $v ) . '"';
+						}
+					}
+
+					// Update table if we have something to set
+					if ( count( $sets ) > 0 ) {
+						$sql = 'UPDATE ' . $t . ' SET ' . implode( ',', $sets ) . ' WHERE `' . $id . '`=' . $row[ $id ] . ' LIMIT 1;';
+						$wpdb->get_results($sql);
 					}
 				}
 
-				// Update table if we have something to set
-				if (count($sets) > 0) {
-					$sql = 'UPDATE '.$t.' SET '.implode(',',$sets).' WHERE `'.$id.'`='.$row[$id].' LIMIT 1;';
-					mysql_query($sql);
-				}
-			}
+				$o += count($ret);
+			} while (count($ret) > 0);
 		}
 
 		update_option('auto_domain_change-domain', $new);
@@ -361,13 +387,12 @@ EOD;
 	}
 	
 	/**
-	 * Change domain. This is where the magic happens.
-	 * Called by admin_page() upon form submission.
+	 * Backup database as SQL
 	 *
 	 * @author	Tommy Lacroix <tlacroix@nuagelab.com>
 	 * @access	private
 	 */
-	private function do_backup()
+	private function do_backup_sql()
 	{
 		global $wpdb;
 
@@ -378,14 +403,10 @@ EOD;
 		header('Content-Type: text/plain; charset="UTF-8"');
 		header('Content-Disposition: attachment; filename="'.$fn.'"');
 
-		mysql_connect(DB_HOST, DB_USER, DB_PASSWORD);
-		mysql_select_db(DB_NAME);
-		mysql_query('SET NAMES '.DB_CHARSET);
-		if (function_exists('mysql_set_charset')) mysql_set_charset(DB_CHARSET);
-
-		$ret = mysql_query('SHOW TABLES;');
+		$ret = $wpdb->get_results('SHOW TABLES;');
 		$tables = array();
-		while ($row = mysql_fetch_assoc($ret)) {
+		foreach ($ret as $row) {
+			$row = get_object_vars($row);
 			$row = array_values($row);
 			$tables [] = reset($row);
 		}
@@ -395,31 +416,116 @@ EOD;
 			if (substr($t,0,strlen($wpdb->prefix)) != $wpdb->prefix) continue;
 
 			// Get table indices
-			$ret = mysql_query('SHOW CREATE TABLE '.$t);
+			$ret = $wpdb->get_results('SHOW CREATE TABLE '.$t);
 			$id = null;
-			while ($row = mysql_fetch_assoc($ret)) {
-				$ct = $row['Create Table'];
+			foreach ($ret as $row) {
+				$ct = $row->{'Create Table'};
 				echo $ct.';'.PHP_EOL;
 			}
 
 			// Process all rows
-			$ret = mysql_query('SELECT * FROM '.$t);
-			while ($row = mysql_fetch_assoc($ret)) {
-				$ak = array();
-				$av = array();
-				foreach ($row as $k=>$v) {
-					$ak[] = '`'.mysql_real_escape_string($k).'`';
-					if ($v === null) $av[] = 'NULL';
-						else $av[] = '"'.mysql_real_escape_string($v).'"';
+			$o = 0;
+			do {
+				$ret = $wpdb->get_results( 'SELECT * FROM ' . $t . ' LIMIT '.$o.',50;' );
+				foreach ($ret as $row) {
+					$row = get_object_vars($row);
+
+					$ak = array();
+					$av = array();
+					foreach ( $row as $k => $v ) {
+						$ak[] = '`' . esc_sql( $k ) . '`';
+						if ( $v === null ) {
+							$av[] = 'NULL';
+						} else {
+							$av[] = '"' . esc_sql( $v ) . '"';
+						}
+					}
+					printf( 'INSERT INTO `%1$s` (%2$s) VALUES (%3$s);' . PHP_EOL, $t, implode( ',', $ak ), implode( ',', $av ) );
 				}
-				printf('INSERT INTO `%1$s` (%2$s) VALUES (%3$s);'.PHP_EOL, $t, implode(',',$ak), implode(',', $av));
-			}
+				$o += count($ret);
+			} while (count($ret) > 0);
 			echo PHP_EOL;
 			echo PHP_EOL;
 		}
 		
 		die;
-	} // do_backup()
+	} // do_backup_sql()
+
+
+	/**
+	 * Backup database as PHP
+	 *
+	 * @author	Tommy Lacroix <tlacroix@nuagelab.com>
+	 * @access	private
+	 */
+	private function do_backup_php()
+	{
+		global $wpdb;
+
+		@set_time_limit(0);
+
+		$fn = preg_replace('/[^a-zA-Z0-9_\-]/', '_', preg_replace(',http(|s)://,i','',get_bloginfo('url'))).'-'.date('Ymd-His').'.php';
+
+		header('Content-Type: text/plain; charset="UTF-8"');
+		header('Content-Disposition: attachment; filename="'.$fn.'"');
+
+		echo '<?php'.PHP_EOL;
+		echo '// Put this file at the root of your WordPress installation and execute it.'.PHP_EOL.PHP_EOL;
+		echo 'require "wp-config.php";' . PHP_EOL;
+		echo 'global $wpdb;' . PHP_EOL;
+
+		$ret = $wpdb->get_results('SHOW TABLES;');
+		$tables = array();
+		foreach ($ret as $row) {
+			$row = get_object_vars($row);
+			$row = array_values($row);
+			$tables [] = reset($row);
+		}
+
+		$ifdrop = 'if (isset($_GET["drop"])) $wpdb->get_var("DROP TABLE IF EXISTS `%T%`;"); if ($wpdb->last_error) die("Query failed");'.PHP_EOL;
+
+		foreach ($tables as $t) {
+			// Skip if the table name doesn't match the wordpress prefix
+			if (substr($t,0,strlen($wpdb->prefix)) != $wpdb->prefix) continue;
+
+			// Get table indices
+			$ret = $wpdb->get_results('SHOW CREATE TABLE '.$t);
+			$id = null;
+			foreach ($ret as $row) {
+				$ct = $row->{'Create Table'};
+				echo str_replace('%T%', $t, $ifdrop);
+				printf('$wpdb->get_results('.var_export($ct, true).'); if ($wpdb->last_error) die("Query failed");');
+				echo PHP_EOL;
+			}
+
+			// Process all rows
+			$o = 0;
+			do {
+				$ret = $wpdb->get_results( 'SELECT * FROM ' . $t . ' LIMIT ' . $o . ',50;' );
+				foreach ( $ret as $row ) {
+					$row = get_object_vars( $row );
+					$ak  = array();
+					$av  = array();
+					foreach ( $row as $k => $v ) {
+						$ak[] = '`' . esc_sql( $k ) . '`';
+						if ( $v === null ) {
+							$av[] = 'NULL';
+						} else {
+							$av[] = '"' . esc_sql( $v ) . '"';
+						}
+					}
+					$query = sprintf( 'INSERT INTO `%1$s` (%2$s) VALUES (%3$s);', $t, implode( ',', $ak ), implode( ',', $av ) );
+					echo '$wpdb->get_results(' . var_export($query,true). '); if ($wpdb->last_error) die("Query failed");';
+					echo PHP_EOL;
+				}
+				$o += count($ret);
+			} while (count($ret) > 0);
+			echo PHP_EOL;
+			echo PHP_EOL;
+		}
+
+		die;
+	} // do_backup_php()
 
 
 	/**
